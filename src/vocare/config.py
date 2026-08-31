@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     """Below this cosine-similarity score, retrieval is treated as 'no good match'
     for the confidence/fallback logic - see agent/core.py."""
 
+    rag_dedup_similarity: float = 0.93
+    """At or above this cosine-similarity score, a new question is treated as a
+    near-duplicate of a previously stored one and its exchange is not persisted
+    again - deliberately much stricter than rag_min_similarity, which only asks
+    'relevant enough to show the model', not 'the same question as before'."""
+
     def require_api_key(self) -> str:
         if not self.gemini_api_key:
             raise RuntimeError(

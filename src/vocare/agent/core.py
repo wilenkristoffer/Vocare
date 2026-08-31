@@ -125,19 +125,34 @@ class Agent:
             response = await self.chat.send_message(response_parts)
 
         final_text = response.text or "(no response text)"
-        await self._persist_turn("user", user_text, query_embedding)
         assistant_embedding = await embed_query(self.client, self.settings, final_text)
-        await self._persist_turn("assistant", final_text, assistant_embedding)
+        if await self._is_duplicate_question(query_embedding):
+            logger.debug("skipped_duplicate_exchange", question=user_text)
+        else:
+            await self._persist_exchange(user_text, final_text, query_embedding, assistant_embedding)
         return final_text
 
-    async def _persist_turn(self, role: str, content: str, embedding: list[float]) -> None:
+    async def _is_duplicate_question(self, question_embedding: list[float]) -> bool:
         async with session_scope(self.settings) as session:
-            await store.add_conversation_turn(
+            return await store.find_similar_past_question(
+                session, question_embedding, self.settings.rag_dedup_similarity
+            )
+
+    async def _persist_exchange(
+        self,
+        question: str,
+        answer: str,
+        question_embedding: list[float],
+        answer_embedding: list[float],
+    ) -> None:
+        async with session_scope(self.settings) as session:
+            await store.add_conversation_exchange(
                 session,
                 session_id=self.conversation_session_id,
-                role=role,
-                content=content,
-                embedding=embedding,
+                question=question,
+                answer=answer,
+                question_embedding=question_embedding,
+                answer_embedding=answer_embedding,
             )
             await session.commit()
 

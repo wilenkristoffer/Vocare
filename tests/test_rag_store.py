@@ -114,19 +114,21 @@ async def test_search_knowledge_lexical_fallback_finds_poorly_ranked_exact_term(
 async def test_conversation_history_excludes_current_session(db_session) -> None:
     session_a = await store.create_conversation_session(db_session, mode="text")
     session_b = await store.create_conversation_session(db_session, mode="text")
-    await store.add_conversation_turn(
+    await store.add_conversation_exchange(
         db_session,
         session_id=session_a,
-        role="user",
-        content="from session A",
-        embedding=_unit_vector(768, 0),
+        question="question from session A",
+        answer="answer from session A",
+        question_embedding=_unit_vector(768, 0),
+        answer_embedding=_unit_vector(768, 100),
     )
-    await store.add_conversation_turn(
+    await store.add_conversation_exchange(
         db_session,
         session_id=session_b,
-        role="user",
-        content="from session B",
-        embedding=_unit_vector(768, 0),
+        question="question from session B",
+        answer="answer from session B",
+        question_embedding=_unit_vector(768, 0),
+        answer_embedding=_unit_vector(768, 100),
     )
     await db_session.commit()
 
@@ -135,5 +137,57 @@ async def test_conversation_history_excludes_current_session(db_session) -> None
     )
 
     contents = [r.content for r in results]
-    assert "from session B" in contents
-    assert "from session A" not in contents
+    assert any("from session B" in c for c in contents)
+    assert not any("from session A" in c for c in contents)
+
+
+async def test_conversation_history_matches_on_answer_side_and_returns_full_pair(db_session) -> None:
+    """A new question can match an old *answer's* wording, not just an old
+    question's - and the retrieved hit must still contain both sides of the
+    pair, never just the matched fragment on its own."""
+    session_id = await store.create_conversation_session(db_session, mode="text")
+    await store.add_conversation_exchange(
+        db_session,
+        session_id=session_id,
+        question="unrelated question wording",
+        answer="the answer that matches the new query",
+        question_embedding=_unit_vector(768, 200),  # far from the query
+        answer_embedding=_unit_vector(768, 0),  # close to the query
+    )
+    await db_session.commit()
+
+    results = await store.search_conversation_history(db_session, _unit_vector(768, 0), top_k=5)
+
+    assert len(results) == 1
+    assert "unrelated question wording" in results[0].content
+    assert "the answer that matches the new query" in results[0].content
+
+
+async def test_find_similar_past_question_true_above_threshold(db_session) -> None:
+    session_id = await store.create_conversation_session(db_session, mode="text")
+    await store.add_conversation_exchange(
+        db_session,
+        session_id=session_id,
+        question="what does E02 mean?",
+        answer="E02 means the sensor is disconnected.",
+        question_embedding=_unit_vector(768, 0),
+        answer_embedding=_unit_vector(768, 100),
+    )
+    await db_session.commit()
+
+    assert await store.find_similar_past_question(db_session, _unit_vector(768, 0), 0.93) is True
+
+
+async def test_find_similar_past_question_false_below_threshold(db_session) -> None:
+    session_id = await store.create_conversation_session(db_session, mode="text")
+    await store.add_conversation_exchange(
+        db_session,
+        session_id=session_id,
+        question="what does E02 mean?",
+        answer="E02 means the sensor is disconnected.",
+        question_embedding=_unit_vector(768, 1),
+        answer_embedding=_unit_vector(768, 100),
+    )
+    await db_session.commit()
+
+    assert await store.find_similar_past_question(db_session, _unit_vector(768, 0), 0.93) is False

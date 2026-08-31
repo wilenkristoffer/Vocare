@@ -37,24 +37,27 @@ class ConversationSession(Base):
     mode: Mapped[str] = mapped_column(Text, nullable=False)  # "text" | "voice"
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    turns: Mapped[list[ConversationTurn]] = relationship(back_populates="session")
+    exchanges: Mapped[list[ConversationExchange]] = relationship(back_populates="session")
 
 
-class ConversationTurn(Base):
-    """A single message in a session, embedded so past conversations are retrievable."""
+class ConversationExchange(Base):
+    """One question+answer pair from a session, each side embedded so past
+    conversations are retrievable either by a new question resembling an old
+    question, or by a new question resembling an old answer's wording."""
 
-    __tablename__ = "conversation_turns"
+    __tablename__ = "conversation_exchanges"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("conversation_sessions.id"), nullable=False
     )
-    role: Mapped[str] = mapped_column(Text, nullable=False)  # "user" | "assistant" | "tool"
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    question_embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
+    answer_embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    session: Mapped[ConversationSession] = relationship(back_populates="turns")
+    session: Mapped[ConversationSession] = relationship(back_populates="exchanges")
 
 
 class RetrievedChunk:

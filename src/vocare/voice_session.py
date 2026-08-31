@@ -17,10 +17,13 @@ into three steps per turn:
 This keeps the interesting agent logic (RAG injection, escalation policy,
 MCP tool-calling) identical between text and voice, and avoids depending on
 the harder-to-verify-without-a-live-key details of driving tool calls
-through an open Live session. The trade-off is an extra model round trip per
-turn instead of one continuous session - acceptable for a demo, and a
-documented stretch goal (collapse to one live session) if lower latency
-matters later.
+through an open Live session. It's also cheaper: Gemini's standard
+generateContent audio input is $1.00/1M tokens vs. $3.00/1M on the
+native-audio Live model, so routing transcription through the standard
+endpoint instead of Live saves money on top of being simpler to test. The
+trade-off is an extra model round trip per turn instead of one continuous
+session - acceptable for a demo, and a documented stretch goal (collapse to
+one live session) if lower latency matters later.
 """
 
 from __future__ import annotations

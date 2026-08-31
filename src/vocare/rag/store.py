@@ -6,7 +6,12 @@ import uuid
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vocare.rag.models import ConversationSession, ConversationTurn, KnowledgeChunk, RetrievedChunk
+from vocare.rag.models import (
+    ConversationExchange,
+    ConversationSession,
+    KnowledgeChunk,
+    RetrievedChunk,
+)
 
 # Similarity score assigned to a full-text-only match (see search_knowledge) -
 # high enough to clear the agent's rag_min_similarity fallback threshold.
@@ -102,16 +107,32 @@ async def create_conversation_session(session: AsyncSession, mode: str) -> uuid.
     return record.id
 
 
-async def add_conversation_turn(
+async def add_conversation_exchange(
     session: AsyncSession,
     *,
     session_id: uuid.UUID,
-    role: str,
-    content: str,
-    embedding: list[float],
+    question: str,
+    answer: str,
+    question_embedding: list[float],
+    answer_embedding: list[float],
 ) -> None:
     session.add(
-        ConversationTurn(session_id=session_id, role=role, content=content, embedding=embedding)
+        ConversationExchange(
+            session_id=session_id,
+            question=question,
+            answer=answer,
+            question_embedding=question_embedding,
+            answer_embedding=answer_embedding,
+        )
+    )
+
+
+def _exchange_hit(exchange: ConversationExchange, similarity: float) -> RetrievedChunk:
+    return RetrievedChunk(
+        title="past conversation",
+        content=f"Q: {exchange.question}\nA: {exchange.answer}",
+        source=str(exchange.session_id),
+        similarity=similarity,
     )
 
 
@@ -121,22 +142,46 @@ async def search_conversation_history(
     top_k: int,
     exclude_session_id: uuid.UUID | None = None,
 ) -> list[RetrievedChunk]:
-    """Retrieve relevant turns from *past* sessions - this is the 'RAG over previous
-    conversations' piece: continuity across separate runs of the app, not just
-    within the current session's own message history (which the model already sees
-    in full via normal chat context)."""
-    distance = ConversationTurn.embedding.cosine_distance(query_embedding)
-    stmt = select(ConversationTurn, distance.label("distance"))
-    if exclude_session_id is not None:
-        stmt = stmt.where(ConversationTurn.session_id != exclude_session_id)
-    stmt = stmt.order_by(distance).limit(top_k)
+    """Retrieve relevant question+answer pairs from *past* sessions - this is the
+    'RAG over previous conversations' piece: continuity across separate runs of the
+    app, not just within the current session's own message history (which the model
+    already sees in full via normal chat context).
+
+    Searches both sides of each pair - the query can match an old question's
+    phrasing or an old answer's phrasing - and always returns the full pair as one
+    hit, keyed by exchange id, so the model never sees an answer without the
+    question it belongs to (or vice versa).
+    """
+    hits: dict[uuid.UUID, RetrievedChunk] = {}
+    for column in (ConversationExchange.question_embedding, ConversationExchange.answer_embedding):
+        distance = column.cosine_distance(query_embedding)
+        stmt = select(ConversationExchange, distance.label("distance"))
+        if exclude_session_id is not None:
+            stmt = stmt.where(ConversationExchange.session_id != exclude_session_id)
+        stmt = stmt.order_by(distance).limit(top_k)
+        result = await session.execute(stmt)
+        for exchange, dist in result.all():
+            similarity = 1.0 - float(dist)
+            existing = hits.get(exchange.id)
+            if existing is None or similarity > existing.similarity:
+                hits[exchange.id] = _exchange_hit(exchange, similarity)
+
+    ranked = sorted(hits.values(), key=lambda hit: hit.similarity, reverse=True)
+    return ranked[:top_k]
+
+
+async def find_similar_past_question(
+    session: AsyncSession, question_embedding: list[float], min_similarity: float
+) -> bool:
+    """True if an existing exchange's question is a near-duplicate of this one.
+
+    Checked across *all* sessions, not just past ones - a repeat within the same
+    long-running session is just as much a duplicate as one from an old session.
+    Used to avoid filling conversation_exchanges with endless near-identical rows
+    (e.g. the same FAQ-style question asked many times).
+    """
+    distance = ConversationExchange.question_embedding.cosine_distance(question_embedding)
+    stmt = select(distance.label("distance")).order_by(distance).limit(1)
     result = await session.execute(stmt)
-    return [
-        RetrievedChunk(
-            title=f"past conversation ({turn.role})",
-            content=turn.content,
-            source=str(turn.session_id),
-            similarity=1.0 - float(dist),
-        )
-        for turn, dist in result.all()
-    ]
+    closest = result.scalar_one_or_none()
+    return closest is not None and (1.0 - float(closest)) >= min_similarity
