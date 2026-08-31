@@ -129,7 +129,9 @@ class Agent:
         if await self._is_duplicate_question(query_embedding):
             logger.debug("skipped_duplicate_exchange", question=user_text)
         else:
-            await self._persist_exchange(user_text, final_text, query_embedding, assistant_embedding)
+            await self._persist_exchange(
+                user_text, final_text, query_embedding, assistant_embedding
+            )
         return final_text
 
     async def _is_duplicate_question(self, question_embedding: list[float]) -> bool:

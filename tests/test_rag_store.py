@@ -141,7 +141,9 @@ async def test_conversation_history_excludes_current_session(db_session) -> None
     assert not any("from session A" in c for c in contents)
 
 
-async def test_conversation_history_matches_on_answer_side_and_returns_full_pair(db_session) -> None:
+async def test_conversation_history_matches_on_answer_side_and_returns_full_pair(
+    db_session,
+) -> None:
     """A new question can match an old *answer's* wording, not just an old
     question's - and the retrieved hit must still contain both sides of the
     pair, never just the matched fragment on its own."""

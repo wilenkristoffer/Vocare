@@ -58,7 +58,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_conversation_exchanges_answer_embedding", table_name="conversation_exchanges")
-    op.drop_index("ix_conversation_exchanges_question_embedding", table_name="conversation_exchanges")
+    op.drop_index(
+        "ix_conversation_exchanges_question_embedding", table_name="conversation_exchanges"
+    )
     op.drop_table("conversation_exchanges")
 
     op.create_table(
